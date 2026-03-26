@@ -3,107 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>GitHub Sync Tracker</title>
+    <title>Live Team Tracker - Sync</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
 
     <style>
-        :root { --blue: #007bff; --green: #28a745; --gray: #6c757d; }
-        body { font-family: -apple-system, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; }
+        :root { --blue: #2563eb; --green: #22c55e; --gray: #64748b; --danger: #ef4444; }
+        body { font-family: -apple-system, system-ui, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; background: #f8fafc; }
+        
+        /* Header für Raum-Einstellungen */
+        #room-header { background: #1e293b; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; z-index: 2000; }
+        #room-header span { font-size: 0.9rem; font-weight: bold; }
+        .btn-settings { background: rgba(255,255,255,0.2); color: white; border: none; padding: 5px 10px; border-radius: 4px; font-size: 0.8rem; }
+
         #map { flex: 1; width: 100%; }
-        #controls { height: 40%; background: white; border-top: 2px solid #ddd; overflow-y: auto; padding: 15px; box-shadow: 0 -5px 15px rgba(0,0,0,0.1); z-index: 1000; }
-        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+
+        #controls { height: 40%; background: white; border-top: 1px solid #e2e8f0; overflow-y: auto; padding: 15px; z-index: 1000; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #f1f5f9; }
         .item.done span { text-decoration: line-through; color: var(--gray); }
-        button { border: none; border-radius: 6px; padding: 8px 12px; font-weight: bold; cursor: pointer; }
+        
+        button { border: none; border-radius: 8px; padding: 8px 12px; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn-check { background: var(--blue); color: white; }
-        .btn-check.is-done { background: var(--gray); }
-        .btn-del { background: #ff4d4d; color: white; margin-left: 5px; }
-        .info-text { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
+        .btn-check.is-done { background: #e2e8f0; color: var(--gray); }
+        .btn-del { background: #fee2e2; color: var(--danger); margin-left: 8px; }
+        
+        .add-hint { width: 100%; background: #f1f5f9; color: #475569; padding: 10px; text-align: center; border-radius: 8px; margin-bottom: 10px; font-size: 0.85rem; }
     </style>
 </head>
 <body>
 
+<div id="room-header">
+    <span>Raum: <span id="current-room-name">...</span></span>
+    <button class="btn-settings" onclick="changeRoom()">Raum wechseln</button>
+</div>
+
 <div id="map"></div>
 
 <div id="controls">
-    <div class="info-text">
-        <strong>Status:</strong> <span id="sync-status">Verbinde...</span><br>
-        <em>Tippe auf die Karte, um ein Ziel hinzuzufügen.</em>
-    </div>
+    <div class="add-hint">📍 Tippe auf die Karte, um ein Ziel hinzuzufügen</div>
     <div id="task-list"></div>
 </div>
 
 <script>
-    // 1. Setup: Raum-ID (aus der URL oder Standard)
+    // 1. RAUM-MANAGEMENT
     const urlParams = new URLSearchParams(window.location.search);
-    const roomId = urlParams.get('room') || 'mein-geheimer-raum-123';
+    let roomId = urlParams.get('room') || 'Tour-Standard';
+    
+    // UI aktualisieren
+    document.getElementById('current-room-name').innerText = roomId;
     if (!urlParams.get('room')) window.history.pushState({}, '', '?room=' + roomId);
 
-    // 2. Gun.js initialisieren (nutzt öffentliche Relay-Server als Brücke)
-    // Diese Server speichern nichts dauerhaft, sie leiten nur die Daten weiter.
-    const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
-    const db = gun.get('geo-sync-app').get(roomId);
+    function changeRoom() {
+        const newRoom = prompt("Gib einen neuen Raumnamen ein (z.B. Tour-Berlin):", roomId);
+        if (newRoom && newRoom !== roomId) {
+            window.location.search = "?room=" + encodeURIComponent(newRoom);
+        }
+    }
 
-    // 3. Karte initialisieren
-    const map = L.map('map').setView([51.1657, 10.4515], 6);
+    // 2. SYNCHRONISATION (Gun.js)
+    const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
+    const db = gun.get('geo-sync-app-v2').get(roomId);
+
+    // 3. KARTE
+    const map = L.map('map').setView([51.16, 10.45], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
     const markers = {};
     const userMarkers = {};
 
-    // 4. Eigene Position verfolgen & teilen
+    // 4. GPS TRACKING
     if (navigator.geolocation) {
+        const myUserId = 'user-' + Math.random().toString(36).substr(2, 5);
         navigator.geolocation.watchPosition(pos => {
             const { latitude, longitude } = pos.coords;
-            const myId = 'user-' + Math.floor(Math.random() * 1000); // Einfache ID für diese Session
+            db.get('locations').get(myUserId).put({ lat: latitude, lng: longitude, time: Date.now() });
             
-            // Eigenen Standort in das P2P-Netzwerk pushen
-            db.get('locations').get(myId).put({ lat: latitude, lng: longitude, time: Date.now() });
-            
-            // Karte beim ersten Mal zentrieren
-            if (Object.keys(userMarkers).length === 0) map.setView([latitude, longitude], 13);
-            
-            document.getElementById('sync-status').innerText = "Live & Synchronisiert";
+            // Karte beim ersten Mal auf mich zentrieren
+            if (Object.keys(userMarkers).length === 0) map.setView([latitude, longitude], 14);
         }, null, { enableHighAccuracy: true });
     }
 
-    // 5. Daten-Synchronisation (Ziele & andere Nutzer)
+    // 5. LIVE UPDATES
     
-    // A: Empfange Team-Standorte
+    // Team-Positionen
     db.get('locations').map().on((data, id) => {
         if (!data) return;
         if (!userMarkers[id]) {
-            userMarkers[id] = L.circleMarker([data.lat, data.lng], { color: 'red', radius: 8 }).addTo(map);
+            userMarkers[id] = L.circleMarker([data.lat, data.lng], { color: '#ef4444', radius: 6, fillOpacity: 0.8 }).addTo(map);
         } else {
             userMarkers[id].setLatLng([data.lat, data.lng]);
         }
     });
 
-    // B: Empfange Ziel-Liste
+    // Aufgaben-Liste
     db.get('tasks').map().on((data, id) => {
         const listContainer = document.getElementById('task-list');
         let itemDiv = document.getElementById('item-' + id);
 
-        if (!data) { // Gelöscht
+        if (!data) {
             if (itemDiv) itemDiv.remove();
             if (markers[id]) map.removeLayer(markers[id]);
             return;
         }
 
-        // Karten-Marker
+        // Marker auf Karte
         if (!markers[id]) {
             markers[id] = L.marker([data.lat, data.lng]).addTo(map);
         }
         markers[id].setOpacity(data.done ? 0.3 : 1);
+        markers[id].bindPopup(data.name);
 
-        // Listen-Eintrag
+        // Listen-Element in der UI
         if (!itemDiv) {
             itemDiv = document.createElement('div');
             itemDiv.id = 'item-' + id;
             itemDiv.className = 'item';
-            listContainer.appendChild(itemDiv);
+            listContainer.prepend(itemDiv); // Neue oben
         }
 
         itemDiv.className = 'item ' + (data.done ? 'done' : '');
@@ -111,14 +128,14 @@
             <span>${data.name}</span>
             <div>
                 <button class="btn-check ${data.done ? 'is-done' : ''}" onclick="toggleDone('${id}', ${data.done})">
-                    ${data.done ? 'Warten' : 'Erledigt'}
+                    ${data.done ? 'Wiederherstellen' : 'Erledigt'}
                 </button>
-                <button class="btn-del" onclick="deleteTask('${id}')">🗑️</button>
+                <button class="btn-del" onclick="deleteTask('${id}')">✕</button>
             </div>
         `;
     });
 
-    // 6. Funktionen zum Schreiben
+    // 6. INTERAKTIONEN
     map.on('click', e => {
         const name = prompt("Name für diesen Ort:");
         if (name) {
@@ -131,8 +148,13 @@
         }
     });
 
-    window.toggleDone = (id, current) => db.get('tasks').get(id).put({ done: !current });
-    window.deleteTask = (id) => db.get('tasks').get(id).put(null);
+    window.toggleDone = (id, currentStatus) => {
+        db.get('tasks').get(id).put({ done: !currentStatus });
+    };
+
+    window.deleteTask = (id) => {
+        if(confirm("Diesen Ort löschen?")) db.get('tasks').get(id).put(null);
+    };
 
 </script>
 </body>
