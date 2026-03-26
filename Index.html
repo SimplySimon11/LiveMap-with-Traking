@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>GitHub Live Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex: 1; }
+        #list { height: 35%; overflow-y: auto; background: white; padding: 15px; box-shadow: 0 -5px 10px rgba(0,0,0,0.1); z-index: 1000; }
+        .item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+        .done { text-decoration: line-through; color: gray; }
+        button { cursor: pointer; border-radius: 5px; border: none; padding: 5px 10px; }
+        .btn-add { width: 100%; background: #2563eb; color: white; padding: 10px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="list">
+    <button class="btn-add" onclick="addNewLocation()">+ Ort hinzufügen (oder Karte klicken)</button>
+    <div id="task-items"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+
+<script>
+    // 1. Raum-ID aus URL holen (z.B. index.html?room=meinTeam)
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room') || 'standard-raum-123';
+    if (!params.get('room')) window.history.pushState({}, '', '?room=' + roomId);
+
+    // 2. Gun initialisieren (Öffentliche Relay-Server nutzen)
+    const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
+    const dbTasks = gun.get('tracker-tasks-' + roomId);
+    const dbUsers = gun.get('tracker-users-' + roomId);
+
+    // 3. Karte
+    const map = L.map('map').setView([51.1657, 10.4515], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    const markers = {};
+    const userMarkers = {};
+
+    // 4. Echtzeit: Aufgaben/Orte laden
+    dbTasks.map().on((data, id) => {
+        if (!data) { 
+            if (markers[id]) { map.removeLayer(markers[id]); delete markers[id]; renderList(); }
+            return; 
+        }
+        
+        // Marker auf Karte
+        if (!markers[id]) {
+            markers[id] = L.marker([data.lat, data.lng]).addTo(map);
+        }
+        markers[id].setOpacity(data.done ? 0.4 : 1);
+        markers[id].bindPopup(data.name);
+
+        renderList();
+    });
+
+    function renderList() {
+        const container = document.getElementById('task-items');
+        container.innerHTML = '';
+        dbTasks.map().once((data, id) => {
+            if (!data) return;
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `
+                <span class="${data.done ? 'done' : ''}">${data.name}</span>
+                <div>
+                    <button onclick="toggleTask('${id}', ${data.done})">${data.done ? '↩️' : '✅'}</button>
+                    <button onclick="deleteTask('${id}')">🗑️</button>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // 5. Echtzeit: GPS Standorte der anderen
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(pos => {
+            dbUsers.get('user-' + roomId).put({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        });
+    }
+
+    // Aktionen
+    function addNewLocation() {
+        const name = prompt("Name des Ortes:");
+        if (name) {
+            const center = map.getCenter();
+            dbTasks.set({ name, lat: center.lat, lng: center.lng, done: false });
+        }
+    }
+
+    window.toggleTask = (id, status) => dbTasks.get(id).put({ done: !status });
+    window.deleteTask = (id) => dbTasks.get(id).put(null);
+
+    map.on('click', e => {
+        const name = prompt("Ort hier speichern?");
+        if (name) dbTasks.set({ name, lat: e.latlng.lat, lng: e.latlng.lng, done: false });
+    });
+
+</script>
+</body>
+</html>
