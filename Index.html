@@ -3,105 +3,136 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>GitHub Live Tracker</title>
+    <title>GitHub Sync Tracker</title>
+    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+
     <style>
-        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        #map { flex: 1; }
-        #list { height: 35%; overflow-y: auto; background: white; padding: 15px; box-shadow: 0 -5px 10px rgba(0,0,0,0.1); z-index: 1000; }
-        .item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
-        .done { text-decoration: line-through; color: gray; }
-        button { cursor: pointer; border-radius: 5px; border: none; padding: 5px 10px; }
-        .btn-add { width: 100%; background: #2563eb; color: white; padding: 10px; margin-bottom: 10px; }
+        :root { --blue: #007bff; --green: #28a745; --gray: #6c757d; }
+        body { font-family: -apple-system, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; }
+        #map { flex: 1; width: 100%; }
+        #controls { height: 40%; background: white; border-top: 2px solid #ddd; overflow-y: auto; padding: 15px; box-shadow: 0 -5px 15px rgba(0,0,0,0.1); z-index: 1000; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+        .item.done span { text-decoration: line-through; color: var(--gray); }
+        button { border: none; border-radius: 6px; padding: 8px 12px; font-weight: bold; cursor: pointer; }
+        .btn-check { background: var(--blue); color: white; }
+        .btn-check.is-done { background: var(--gray); }
+        .btn-del { background: #ff4d4d; color: white; margin-left: 5px; }
+        .info-text { font-size: 0.8rem; color: #666; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
-<div id="list">
-    <button class="btn-add" onclick="addNewLocation()">+ Ort hinzufügen (oder Karte klicken)</button>
-    <div id="task-items"></div>
+
+<div id="controls">
+    <div class="info-text">
+        <strong>Status:</strong> <span id="sync-status">Verbinde...</span><br>
+        <em>Tippe auf die Karte, um ein Ziel hinzuzufügen.</em>
+    </div>
+    <div id="task-list"></div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
-
 <script>
-    // 1. Raum-ID aus URL holen (z.B. index.html?room=meinTeam)
-    const params = new URLSearchParams(window.location.search);
-    const roomId = params.get('room') || 'standard-raum-123';
-    if (!params.get('room')) window.history.pushState({}, '', '?room=' + roomId);
+    // 1. Setup: Raum-ID (aus der URL oder Standard)
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || 'mein-geheimer-raum-123';
+    if (!urlParams.get('room')) window.history.pushState({}, '', '?room=' + roomId);
 
-    // 2. Gun initialisieren (Öffentliche Relay-Server nutzen)
+    // 2. Gun.js initialisieren (nutzt öffentliche Relay-Server als Brücke)
+    // Diese Server speichern nichts dauerhaft, sie leiten nur die Daten weiter.
     const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
-    const dbTasks = gun.get('tracker-tasks-' + roomId);
-    const dbUsers = gun.get('tracker-users-' + roomId);
+    const db = gun.get('geo-sync-app').get(roomId);
 
-    // 3. Karte
+    // 3. Karte initialisieren
     const map = L.map('map').setView([51.1657, 10.4515], 6);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
     const markers = {};
     const userMarkers = {};
 
-    // 4. Echtzeit: Aufgaben/Orte laden
-    dbTasks.map().on((data, id) => {
-        if (!data) { 
-            if (markers[id]) { map.removeLayer(markers[id]); delete markers[id]; renderList(); }
-            return; 
+    // 4. Eigene Position verfolgen & teilen
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(pos => {
+            const { latitude, longitude } = pos.coords;
+            const myId = 'user-' + Math.floor(Math.random() * 1000); // Einfache ID für diese Session
+            
+            // Eigenen Standort in das P2P-Netzwerk pushen
+            db.get('locations').get(myId).put({ lat: latitude, lng: longitude, time: Date.now() });
+            
+            // Karte beim ersten Mal zentrieren
+            if (Object.keys(userMarkers).length === 0) map.setView([latitude, longitude], 13);
+            
+            document.getElementById('sync-status').innerText = "Live & Synchronisiert";
+        }, null, { enableHighAccuracy: true });
+    }
+
+    // 5. Daten-Synchronisation (Ziele & andere Nutzer)
+    
+    // A: Empfange Team-Standorte
+    db.get('locations').map().on((data, id) => {
+        if (!data) return;
+        if (!userMarkers[id]) {
+            userMarkers[id] = L.circleMarker([data.lat, data.lng], { color: 'red', radius: 8 }).addTo(map);
+        } else {
+            userMarkers[id].setLatLng([data.lat, data.lng]);
         }
-        
-        // Marker auf Karte
+    });
+
+    // B: Empfange Ziel-Liste
+    db.get('tasks').map().on((data, id) => {
+        const listContainer = document.getElementById('task-list');
+        let itemDiv = document.getElementById('item-' + id);
+
+        if (!data) { // Gelöscht
+            if (itemDiv) itemDiv.remove();
+            if (markers[id]) map.removeLayer(markers[id]);
+            return;
+        }
+
+        // Karten-Marker
         if (!markers[id]) {
             markers[id] = L.marker([data.lat, data.lng]).addTo(map);
         }
-        markers[id].setOpacity(data.done ? 0.4 : 1);
-        markers[id].bindPopup(data.name);
+        markers[id].setOpacity(data.done ? 0.3 : 1);
 
-        renderList();
-    });
-
-    function renderList() {
-        const container = document.getElementById('task-items');
-        container.innerHTML = '';
-        dbTasks.map().once((data, id) => {
-            if (!data) return;
-            const div = document.createElement('div');
-            div.className = 'item';
-            div.innerHTML = `
-                <span class="${data.done ? 'done' : ''}">${data.name}</span>
-                <div>
-                    <button onclick="toggleTask('${id}', ${data.done})">${data.done ? '↩️' : '✅'}</button>
-                    <button onclick="deleteTask('${id}')">🗑️</button>
-                </div>
-            `;
-            container.appendChild(div);
-        });
-    }
-
-    // 5. Echtzeit: GPS Standorte der anderen
-    if (navigator.geolocation) {
-        navigator.geolocation.watchPosition(pos => {
-            dbUsers.get('user-' + roomId).put({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        });
-    }
-
-    // Aktionen
-    function addNewLocation() {
-        const name = prompt("Name des Ortes:");
-        if (name) {
-            const center = map.getCenter();
-            dbTasks.set({ name, lat: center.lat, lng: center.lng, done: false });
+        // Listen-Eintrag
+        if (!itemDiv) {
+            itemDiv = document.createElement('div');
+            itemDiv.id = 'item-' + id;
+            itemDiv.className = 'item';
+            listContainer.appendChild(itemDiv);
         }
-    }
 
-    window.toggleTask = (id, status) => dbTasks.get(id).put({ done: !status });
-    window.deleteTask = (id) => dbTasks.get(id).put(null);
-
-    map.on('click', e => {
-        const name = prompt("Ort hier speichern?");
-        if (name) dbTasks.set({ name, lat: e.latlng.lat, lng: e.latlng.lng, done: false });
+        itemDiv.className = 'item ' + (data.done ? 'done' : '');
+        itemDiv.innerHTML = `
+            <span>${data.name}</span>
+            <div>
+                <button class="btn-check ${data.done ? 'is-done' : ''}" onclick="toggleDone('${id}', ${data.done})">
+                    ${data.done ? 'Warten' : 'Erledigt'}
+                </button>
+                <button class="btn-del" onclick="deleteTask('${id}')">🗑️</button>
+            </div>
+        `;
     });
+
+    // 6. Funktionen zum Schreiben
+    map.on('click', e => {
+        const name = prompt("Name für diesen Ort:");
+        if (name) {
+            db.get('tasks').set({
+                name: name,
+                lat: e.latlng.lat,
+                lng: e.latlng.lng,
+                done: false
+            });
+        }
+    });
+
+    window.toggleDone = (id, current) => db.get('tasks').get(id).put({ done: !current });
+    window.deleteTask = (id) => db.get('tasks').get(id).put(null);
 
 </script>
 </body>
