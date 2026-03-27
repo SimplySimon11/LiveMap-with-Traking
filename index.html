@@ -3,286 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Live Team Tracker & Tasks</title>
-    
+    <title>GitHub Live Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
     <style>
-        :root {
-            --primary: #2563eb;
-            --success: #22c55e;
-            --danger: #ef4444;
-            --bg: #f8fafc;
-        }
-
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            margin: 0; 
-            display: flex; 
-            flex-direction: column; 
-            height: 100vh; 
-            background: var(--bg);
-            overflow: hidden;
-        }
-
-        /* Karten-Bereich */
-        #map { flex: 1; width: 100%; z-index: 1; }
-
-        /* UI-Container unten */
-        #ui-container { 
-            height: 40%; 
-            background: white; 
-            z-index: 1000; 
-            display: flex; 
-            flex-direction: column;
-            border-top-left-radius: 20px;
-            border-top-right-radius: 20px;
-            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
-        }
-
-        .header {
-            padding: 15px 20px;
-            border-bottom: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .header h2 { margin: 0; font-size: 1.1rem; color: #1e293b; }
-        
-        .share-btn {
-            background: #f1f5f9;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        /* Aufgaben-Liste */
-        #task-list {
-            flex: 1;
-            overflow-y: auto;
-            margin: 0;
-            padding: 0;
-            list-style: none;
-        }
-
-        .task-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 20px;
-            border-bottom: 1px solid #f1f5f9;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        .task-info { display: flex; flex-direction: column; flex: 1; }
-        .task-name { font-weight: 600; color: #334155; }
-        .task-item.done .task-name { text-decoration: line-through; color: #94a3b8; }
-
-        .actions { display: flex; gap: 8px; }
-        
-        button.icon-btn {
-            border: none;
-            padding: 8px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: transform 0.1s;
-        }
-        button.icon-btn:active { transform: scale(0.9); }
-        .btn-check { background: #dcfce7; color: var(--success); }
-        .btn-delete { background: #fee2e2; color: var(--danger); }
-
-        .footer-info {
-            padding: 10px 20px;
-            font-size: 0.75rem;
-            color: #64748b;
-            text-align: center;
-            background: #f8fafc;
-        }
-
-        /* Custom Marker Styles */
-        .user-dot {
-            width: 12px;
-            height: 12px;
-            background: var(--primary);
-            border: 2px solid white;
-            border-radius: 50%;
-            box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
-        }
+        body { font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex: 1; }
+        #list { height: 35%; overflow-y: auto; background: white; padding: 15px; box-shadow: 0 -5px 10px rgba(0,0,0,0.1); z-index: 1000; }
+        .item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; }
+        .done { text-decoration: line-through; color: gray; }
+        button { cursor: pointer; border-radius: 5px; border: none; padding: 5px 10px; }
+        .btn-add { width: 100%; background: #2563eb; color: white; padding: 10px; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <div id="map"></div>
+<div id="map"></div>
+<div id="list">
+    <button class="btn-add" onclick="addNewLocation()">+ Ort hinzufügen (oder Karte klicken)</button>
+    <div id="task-items"></div>
+</div>
 
-    <div id="ui-container">
-        <div class="header">
-            <div>
-                <h2 id="room-title">Live Karte</h2>
-                <span style="font-size: 0.7rem; color: #94a3b8;">Tippe auf die Karte zum Hinzufügen</span>
-            </div>
-            <button class="share-btn" onclick="copyLink()">Link teilen 🔗</button>
-        </div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
 
-        <ul id="task-list">
-            </ul>
+<script>
+    // 1. Raum-ID aus URL holen (z.B. index.html?room=meinTeam)
+    const params = new URLSearchParams(window.location.search);
+    const roomId = params.get('room') || 'standard-raum-123';
+    if (!params.get('room')) window.history.pushState({}, '', '?room=' + roomId);
 
-        <div class="footer-info">
-            Standorte werden nach 10s Inaktivität ausgeblendet.
-        </div>
-    </div>
+    // 2. Gun initialisieren (Öffentliche Relay-Server nutzen)
+    const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
+    const dbTasks = gun.get('tracker-tasks-' + roomId);
+    const dbUsers = gun.get('tracker-users-' + roomId);
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    // 3. Karte
+    const map = L.map('map').setView([51.1657, 10.4515], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    <script>
-        // --- 1. SETUP & INITIALISIERUNG ---
-        const params = new URLSearchParams(window.location.search);
-        const roomId = params.get('room') || 'Room-' + Math.random().toString(36).substr(2, 5);
-        if (!params.get('room')) window.history.pushState({}, '', '?room=' + roomId);
-        document.getElementById('room-title').innerText = "Raum: " + roomId;
+    const markers = {};
+    const userMarkers = {};
 
-        const myUserId = 'user-' + Math.random().toString(36).substr(2, 9);
+    // 4. Echtzeit: Aufgaben/Orte laden
+    dbTasks.map().on((data, id) => {
+        if (!data) { 
+            if (markers[id]) { map.removeLayer(markers[id]); delete markers[id]; renderList(); }
+            return; 
+        }
         
-        // Gun.js für Echtzeit (öffentliche Relay-Server)
-        const gun = Gun([
-            'https://gun-manhattan.herokuapp.com/gun',
-            'https://relay.peer.ooo/gun'
-        ]);
-        const dbTasks = gun.get('geo-tasks-' + roomId);
-        const dbUsers = gun.get('geo-users-' + roomId);
-
-        // Karte initialisieren
-        const map = L.map('map', { zoomControl: false }).setView([51.1657, 10.4515], 6);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
-        L.control.zoom({ position: 'topright' }).addTo(map);
-
-        const taskMarkers = {};
-        const remoteUserMarkers = {};
-
-        // --- 2. AUFGABEN / LOCATIONS SYNCHRONISIEREN ---
-        dbTasks.map().on((data, id) => {
-            if (!data) {
-                // Wenn Daten gelöscht wurden (null)
-                if (taskMarkers[id]) {
-                    map.removeLayer(taskMarkers[id]);
-                    delete taskMarkers[id];
-                }
-                updateListUI();
-                return;
-            }
-
-            // Marker erstellen oder aktualisieren
-            if (!taskMarkers[id]) {
-                taskMarkers[id] = L.marker([data.lat, data.lng]).addTo(map);
-            }
-            taskMarkers[id].setOpacity(data.done ? 0.3 : 1.0);
-            taskMarkers[id].bindPopup(`<b>${data.name}</b>`);
-
-            updateListUI();
-        });
-
-        function updateListUI() {
-            const list = document.getElementById('task-list');
-            list.innerHTML = '';
-            
-            // Wir lesen die Daten einmalig für die Liste aus
-            dbTasks.map().once((data, id) => {
-                if (!data) return;
-                const li = document.createElement('li');
-                li.className = `task-item ${data.done ? 'done' : ''}`;
-                li.innerHTML = `
-                    <div class="task-info">
-                        <span class="task-name">${data.name}</span>
-                    </div>
-                    <div class="actions">
-                        <button class="icon-btn btn-check" onclick="toggleTask('${id}', ${data.done})">
-                            ${data.done ? '↩️' : '✅'}
-                        </button>
-                        <button class="icon-btn btn-delete" onclick="deleteTask('${id}')">🗑️</button>
-                    </div>
-                `;
-                list.appendChild(li);
-            });
+        // Marker auf Karte
+        if (!markers[id]) {
+            markers[id] = L.marker([data.lat, data.lng]).addTo(map);
         }
+        markers[id].setOpacity(data.done ? 0.4 : 1);
+        markers[id].bindPopup(data.name);
 
-        // --- 3. LIVE STANDORT & 10s CLEANUP ---
-        if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(pos => {
-                dbUsers.get(myUserId).put({
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude,
-                    timestamp: Date.now()
-                });
-            }, null, { enableHighAccuracy: true });
+        renderList();
+    });
+
+    function renderList() {
+        const container = document.getElementById('task-items');
+        container.innerHTML = '';
+        dbTasks.map().once((data, id) => {
+            if (!data) return;
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `
+                <span class="${data.done ? 'done' : ''}">${data.name}</span>
+                <div>
+                    <button onclick="toggleTask('${id}', ${data.done})">${data.done ? '↩️' : '✅'}</button>
+                    <button onclick="deleteTask('${id}')">🗑️</button>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // 5. Echtzeit: GPS Standorte der anderen
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(pos => {
+            dbUsers.get('user-' + roomId).put({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        });
+    }
+
+    // Aktionen
+    function addNewLocation() {
+        const name = prompt("Name des Ortes:");
+        if (name) {
+            const center = map.getCenter();
+            dbTasks.set({ name, lat: center.lat, lng: center.lng, done: false });
         }
+    }
 
-        // Andere User anzeigen
-        dbUsers.map().on((data, id) => {
-            if (!data || id === myUserId) return;
+    window.toggleTask = (id, status) => dbTasks.get(id).put({ done: !status });
+    window.deleteTask = (id) => dbTasks.get(id).put(null);
 
-            if (!remoteUserMarkers[id]) {
-                remoteUserMarkers[id] = {
-                    marker: L.marker([data.lat, data.lng], {
-                        icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [12, 12] })
-                    }).addTo(map),
-                    lastUpdate: data.timestamp
-                };
-            } else {
-                remoteUserMarkers[id].marker.setLatLng([data.lat, data.lng]);
-                remoteUserMarkers[id].lastUpdate = data.timestamp;
-            }
-        });
+    map.on('click', e => {
+        const name = prompt("Ort hier speichern?");
+        if (name) dbTasks.set({ name, lat: e.latlng.lat, lng: e.latlng.lng, done: false });
+    });
 
-        // Der Cleanup-Loop (Prüft jede Sekunde)
-        setInterval(() => {
-            const now = Date.now();
-            for (let id in remoteUserMarkers) {
-                if (now - remoteUserMarkers[id].lastUpdate > 10000) { // 10 Sekunden
-                    map.removeLayer(remoteUserMarkers[id].marker);
-                    delete remoteUserMarkers[id];
-                    // Optional: Auch in der DB aufräumen
-                    dbUsers.get(id).put(null);
-                }
-            }
-        }, 1000);
-
-        // --- 4. INTERAKTIONEN ---
-        map.on('click', e => {
-            const name = prompt("Name für diesen Ort:");
-            if (name) {
-                dbTasks.set({
-                    name: name,
-                    lat: e.latlng.lat,
-                    lng: e.latlng.lng,
-                    done: false
-                });
-            }
-        });
-
-        window.toggleTask = (id, currentStatus) => {
-            dbTasks.get(id).put({ done: !currentStatus });
-        };
-
-        window.deleteTask = (id) => {
-            if (confirm("Ort wirklich löschen?")) {
-                dbTasks.get(id).put(null);
-            }
-        };
-
-        window.copyLink = () => {
-            navigator.clipboard.writeText(window.location.href);
-            alert("Link kopiert! Sende ihn an dein Team.");
-        };
-
-    </script>
+</script>
 </body>
 </html>
