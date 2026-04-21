@@ -1,1 +1,413 @@
-index.html
+@@ -3,159 +3,286 @@
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Live Team Tracker - Sync</title>
+    <title>Live Team Tracker & Tasks</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+
+    
+    <style>
+        :root { --blue: #2563eb; --green: #22c55e; --gray: #64748b; --danger: #ef4444; }
+        body { font-family: -apple-system, system-ui, sans-serif; margin: 0; height: 100vh; display: flex; flex-direction: column; background: #f8fafc; }
+        
+        /* Header für Raum-Einstellungen */
+        #room-header { background: #1e293b; color: white; padding: 10px 15px; display: flex; justify-content: space-between; align-items: center; z-index: 2000; }
+        #room-header span { font-size: 0.9rem; font-weight: bold; }
+        .btn-settings { background: rgba(255,255,255,0.2); color: white; border: none; padding: 5px 10px; border-radius: 4px; font-size: 0.8rem; }
+        :root {
+            --primary: #2563eb;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --bg: #f8fafc;
+        }
+
+        #map { flex: 1; width: 100%; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            background: var(--bg);
+            overflow: hidden;
+        }
+
+        /* Karten-Bereich */
+        #map { flex: 1; width: 100%; z-index: 1; }
+
+        /* UI-Container unten */
+        #ui-container { 
+            height: 40%; 
+            background: white; 
+            z-index: 1000; 
+            display: flex; 
+            flex-direction: column;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #controls { height: 40%; background: white; border-top: 1px solid #e2e8f0; overflow-y: auto; padding: 15px; z-index: 1000; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #f1f5f9; }
+        .item.done span { text-decoration: line-through; color: var(--gray); }
+        .header h2 { margin: 0; font-size: 1.1rem; color: #1e293b; }
+
+        button { border: none; border-radius: 8px; padding: 8px 12px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-check { background: var(--blue); color: white; }
+        .btn-check.is-done { background: #e2e8f0; color: var(--gray); }
+        .btn-del { background: #fee2e2; color: var(--danger); margin-left: 8px; }
+        .share-btn {
+            background: #f1f5f9;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        /* Aufgaben-Liste */
+        #task-list {
+            flex: 1;
+            overflow-y: auto;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .task-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            border-bottom: 1px solid #f1f5f9;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .task-info { display: flex; flex-direction: column; flex: 1; }
+        .task-name { font-weight: 600; color: #334155; }
+        .task-item.done .task-name { text-decoration: line-through; color: #94a3b8; }
+
+        .actions { display: flex; gap: 8px; }
+
+        .add-hint { width: 100%; background: #f1f5f9; color: #475569; padding: 10px; text-align: center; border-radius: 8px; margin-bottom: 10px; font-size: 0.85rem; }
+        button.icon-btn {
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: transform 0.1s;
+        }
+        button.icon-btn:active { transform: scale(0.9); }
+        .btn-check { background: #dcfce7; color: var(--success); }
+        .btn-delete { background: #fee2e2; color: var(--danger); }
+
+        .footer-info {
+            padding: 10px 20px;
+            font-size: 0.75rem;
+            color: #64748b;
+            text-align: center;
+            background: #f8fafc;
+        }
+
+        /* Custom Marker Styles */
+        .user-dot {
+            width: 12px;
+            height: 12px;
+            background: var(--primary);
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(37, 99, 235, 0.5);
+        }
+    </style>
+</head>
+<body>
+
+<div id="room-header">
+    <span>Raum: <span id="current-room-name">...</span></span>
+    <button class="btn-settings" onclick="changeRoom()">Raum wechseln</button>
+</div>
+    <div id="map"></div>
+
+<div id="map"></div>
+    <div id="ui-container">
+        <div class="header">
+            <div>
+                <h2 id="room-title">Live Karte</h2>
+                <span style="font-size: 0.7rem; color: #94a3b8;">Tippe auf die Karte zum Hinzufügen</span>
+            </div>
+            <button class="share-btn" onclick="copyLink()">Link teilen 🔗</button>
+        </div>
+
+<div id="controls">
+    <div class="add-hint">📍 Tippe auf die Karte, um ein Ziel hinzuzufügen</div>
+    <div id="task-list"></div>
+</div>
+        <ul id="task-list">
+            </ul>
+
+<script>
+    // 1. RAUM-MANAGEMENT
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomId = urlParams.get('room') || 'Tour-Standard';
+    
+    // UI aktualisieren
+    document.getElementById('current-room-name').innerText = roomId;
+    if (!urlParams.get('room')) window.history.pushState({}, '', '?room=' + roomId);
+
+    function changeRoom() {
+        const newRoom = prompt("Gib einen neuen Raumnamen ein (z.B. Tour-Berlin):", roomId);
+        if (newRoom && newRoom !== roomId) {
+            window.location.search = "?room=" + encodeURIComponent(newRoom);
+        }
+    }
+        <div class="footer-info">
+            Standorte werden nach 10s Inaktivität ausgeblendet.
+        </div>
+    </div>
+
+    // 2. SYNCHRONISATION (Gun.js)
+    const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://relay.peer.ooo/gun']);
+    const db = gun.get('geo-sync-app-v2').get(roomId);
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+
+    // 3. KARTE
+    const map = L.map('map').setView([51.16, 10.45], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    <script>
+        // --- 1. SETUP & INITIALISIERUNG ---
+        const params = new URLSearchParams(window.location.search);
+        const roomId = params.get('room') || 'Room-' + Math.random().toString(36).substr(2, 5);
+        if (!params.get('room')) window.history.pushState({}, '', '?room=' + roomId);
+        document.getElementById('room-title').innerText = "Raum: " + roomId;
+
+    const markers = {};
+    const userMarkers = {};
+        const myUserId = 'user-' + Math.random().toString(36).substr(2, 9);
+        
+        // Gun.js für Echtzeit (öffentliche Relay-Server)
+        const gun = Gun([
+            'https://gun-manhattan.herokuapp.com/gun',
+            'https://relay.peer.ooo/gun'
+        ]);
+        const dbTasks = gun.get('geo-tasks-' + roomId);
+        const dbUsers = gun.get('geo-users-' + roomId);
+
+    // 4. GPS TRACKING
+    if (navigator.geolocation) {
+        const myUserId = 'user-' + Math.random().toString(36).substr(2, 5);
+        navigator.geolocation.watchPosition(pos => {
+            const { latitude, longitude } = pos.coords;
+            db.get('locations').get(myUserId).put({ lat: latitude, lng: longitude, time: Date.now() });
+            
+            // Karte beim ersten Mal auf mich zentrieren
+            if (Object.keys(userMarkers).length === 0) map.setView([latitude, longitude], 14);
+        }, null, { enableHighAccuracy: true });
+    }
+        // Karte initialisieren
+        const map = L.map('map', { zoomControl: false }).setView([51.1657, 10.4515], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+    // 5. LIVE UPDATES
+    
+    // Team-Positionen
+    db.get('locations').map().on((data, id) => {
+        if (!data) return;
+        if (!userMarkers[id]) {
+            userMarkers[id] = L.circleMarker([data.lat, data.lng], { color: '#ef4444', radius: 6, fillOpacity: 0.8 }).addTo(map);
+        } else {
+            userMarkers[id].setLatLng([data.lat, data.lng]);
+        }
+    });
+        const taskMarkers = {};
+        const remoteUserMarkers = {};
+
+    // Aufgaben-Liste
+    db.get('tasks').map().on((data, id) => {
+        const listContainer = document.getElementById('task-list');
+        let itemDiv = document.getElementById('item-' + id);
+        // --- 2. AUFGABEN / LOCATIONS SYNCHRONISIEREN ---
+        dbTasks.map().on((data, id) => {
+            if (!data) {
+                // Wenn Daten gelöscht wurden (null)
+                if (taskMarkers[id]) {
+                    map.removeLayer(taskMarkers[id]);
+                    delete taskMarkers[id];
+                }
+                updateListUI();
+                return;
+            }
+
+        if (!data) {
+            if (itemDiv) itemDiv.remove();
+            if (markers[id]) map.removeLayer(markers[id]);
+            return;
+        }
+            // Marker erstellen oder aktualisieren
+            if (!taskMarkers[id]) {
+                taskMarkers[id] = L.marker([data.lat, data.lng]).addTo(map);
+            }
+            taskMarkers[id].setOpacity(data.done ? 0.3 : 1.0);
+            taskMarkers[id].bindPopup(`<b>${data.name}</b>`);
+
+        // Marker auf Karte
+        if (!markers[id]) {
+            markers[id] = L.marker([data.lat, data.lng]).addTo(map);
+        }
+        markers[id].setOpacity(data.done ? 0.3 : 1);
+        markers[id].bindPopup(data.name);
+
+        // Listen-Element in der UI
+        if (!itemDiv) {
+            itemDiv = document.createElement('div');
+            itemDiv.id = 'item-' + id;
+            itemDiv.className = 'item';
+            listContainer.prepend(itemDiv); // Neue oben
+        }
+            updateListUI();
+        });
+
+        itemDiv.className = 'item ' + (data.done ? 'done' : '');
+        itemDiv.innerHTML = `
+            <span>${data.name}</span>
+            <div>
+                <button class="btn-check ${data.done ? 'is-done' : ''}" onclick="toggleDone('${id}', ${data.done})">
+                    ${data.done ? 'Wiederherstellen' : 'Erledigt'}
+                </button>
+                <button class="btn-del" onclick="deleteTask('${id}')">✕</button>
+            </div>
+        `;
+    });
+
+    // 6. INTERAKTIONEN
+    map.on('click', e => {
+        const name = prompt("Name für diesen Ort:");
+        if (name) {
+            db.get('tasks').set({
+                name: name,
+                lat: e.latlng.lat,
+                lng: e.latlng.lng,
+                done: false
+        function updateListUI() {
+            const list = document.getElementById('task-list');
+            list.innerHTML = '';
+            
+            // Wir lesen die Daten einmalig für die Liste aus
+            dbTasks.map().once((data, id) => {
+                if (!data) return;
+                const li = document.createElement('li');
+                li.className = `task-item ${data.done ? 'done' : ''}`;
+                li.innerHTML = `
+                    <div class="task-info">
+                        <span class="task-name">${data.name}</span>
+                    </div>
+                    <div class="actions">
+                        <button class="icon-btn btn-check" onclick="toggleTask('${id}', ${data.done})">
+                            ${data.done ? '↩️' : '✅'}
+                        </button>
+                        <button class="icon-btn btn-delete" onclick="deleteTask('${id}')">🗑️</button>
+                    </div>
+                `;
+                list.appendChild(li);
+            });
+        }
+    });
+
+    window.toggleDone = (id, currentStatus) => {
+        db.get('tasks').get(id).put({ done: !currentStatus });
+    };
+        // --- 3. LIVE STANDORT & 10s CLEANUP ---
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(pos => {
+                dbUsers.get(myUserId).put({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    timestamp: Date.now()
+                });
+            }, null, { enableHighAccuracy: true });
+        }
+
+        // Andere User anzeigen
+        dbUsers.map().on((data, id) => {
+            if (!data || id === myUserId) return;
+
+            if (!remoteUserMarkers[id]) {
+                remoteUserMarkers[id] = {
+                    marker: L.marker([data.lat, data.lng], {
+                        icon: L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [12, 12] })
+                    }).addTo(map),
+                    lastUpdate: data.timestamp
+                };
+            } else {
+                remoteUserMarkers[id].marker.setLatLng([data.lat, data.lng]);
+                remoteUserMarkers[id].lastUpdate = data.timestamp;
+            }
+        });
+
+        // Der Cleanup-Loop (Prüft jede Sekunde)
+        setInterval(() => {
+            const now = Date.now();
+            for (let id in remoteUserMarkers) {
+                if (now - remoteUserMarkers[id].lastUpdate > 10000) { // 10 Sekunden
+                    map.removeLayer(remoteUserMarkers[id].marker);
+                    delete remoteUserMarkers[id];
+                    // Optional: Auch in der DB aufräumen
+                    dbUsers.get(id).put(null);
+                }
+            }
+        }, 1000);
+
+        // --- 4. INTERAKTIONEN ---
+        map.on('click', e => {
+            const name = prompt("Name für diesen Ort:");
+            if (name) {
+                dbTasks.set({
+                    name: name,
+                    lat: e.latlng.lat,
+                    lng: e.latlng.lng,
+                    done: false
+                });
+            }
+        });
+
+        window.toggleTask = (id, currentStatus) => {
+            dbTasks.get(id).put({ done: !currentStatus });
+        };
+
+        window.deleteTask = (id) => {
+            if (confirm("Ort wirklich löschen?")) {
+                dbTasks.get(id).put(null);
+            }
+        };
+
+    window.deleteTask = (id) => {
+        if(confirm("Diesen Ort löschen?")) db.get('tasks').get(id).put(null);
+    };
+        window.copyLink = () => {
+            navigator.clipboard.writeText(window.location.href);
+            alert("Link kopiert! Sende ihn an dein Team.");
+        };
+
+</script>
+    </script>
+</body>
+</html>
